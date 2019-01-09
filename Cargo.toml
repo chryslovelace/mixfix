@@ -1,0 +1,7 @@
+[package]
+name = "mixfix"
+version = "0.1.0"
+authors = ["Chris Lovelace <chryslovelace@gmail.com>"]
+
+[dependencies]
+petgraph = "*"

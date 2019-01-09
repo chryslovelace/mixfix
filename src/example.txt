@@ -1,0 +1,17 @@
+module Nat
+
+defn ℕ : Type
+defn 0 : ℕ
+defn succ _ : [ℕ] -> ℕ
+
+defn _ + _ : [ℕ, ℕ] -> ℕ
+x + 0 = x
+x + succ y = succ (x + y)
+
+defn _ * _ : [ℕ, ℕ] -> ℕ
+x * 0 = 0
+x * succ y = x + x * y
+
+defprec (_ + _) + _
+defprec (_ * _) * _
+defprec (_ * _) + (_ * _)
