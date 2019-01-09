@@ -2,20 +2,13 @@ use fixity::Fixity;
 use operator::Operator;
 use petgraph::graph::{DiGraph, NodeIndex};
 
-pub trait PrecedenceGraph {
-    type P;
-    fn ops(&self, Self::P, Fixity) -> Vec<Operator>;
-    fn succ(&self, Self::P) -> Vec<Self::P>;
-    fn all(&self) -> Vec<Self::P>;
-}
-
 #[derive(Default)]
-pub struct Graph(DiGraph<Vec<Operator>, ()>);
+pub struct PrecedenceGraph(DiGraph<Vec<Operator>, ()>);
 
-impl PrecedenceGraph for Graph {
-    type P = NodeIndex;
+pub type Precedence = NodeIndex;
 
-    fn ops(&self, prec: Self::P, fix: Fixity) -> Vec<Operator> {
+impl PrecedenceGraph {
+    pub fn ops(&self, prec: Precedence, fix: Fixity) -> Vec<Operator> {
         self.0
             .node_weight(prec)
             .unwrap()
@@ -25,11 +18,11 @@ impl PrecedenceGraph for Graph {
             .collect()
     }
 
-    fn succ(&self, prec: Self::P) -> Vec<Self::P> {
+    pub fn succ(&self, prec: Precedence) -> Vec<Precedence> {
         self.0.neighbors(prec).collect()
     }
 
-    fn all(&self) -> Vec<Self::P> {
+    pub fn all(&self) -> Vec<Precedence> {
         self.0.node_indices().collect()
     }
 }
