@@ -119,7 +119,12 @@ struct Prec<'g>(&'g PrecedenceGraph, Precedence);
 impl<'g> Parser for Prec<'g> {
     type O = Expr;
     fn p<'i>(&self, toks: &'i [NamePart]) -> Option<(&'i [NamePart], Self::O)> {
-        Opts::<&Parser<O = Expr>>(vec![&Closed(self.0, self.1), &NonAssoc(self.0, self.1)]).p(toks)
+        Opts::<&Parser<O = Expr>>(vec![
+            &Closed(self.0, self.1),
+            &NonAssoc(self.0, self.1),
+            &PreRight(self.0, self.1),
+        ])
+        .p(toks)
     }
 }
 
@@ -151,6 +156,37 @@ impl<'g> Parser for NonAssoc<'g> {
     }
 }
 
+struct PreRight<'g>(&'g PrecedenceGraph, Precedence);
+
+impl<'g> Parser for PreRight<'g> {
+    type O = Expr;
+    fn p<'i>(&self, toks: &'i [NamePart]) -> Option<(&'i [NamePart], Self::O)> {
+        let succ = Precs(self.0, self.0.succ(self.1));
+
+        let (toks, (a, b)) = (
+            Opt(
+                Inner(self.0, self.1, Fixity::Prefix),
+                (
+                    succ.clone(),
+                    Inner(self.0, self.1, Fixity::Infix(Associativity::Right)),
+                ),
+            ),
+            Opt(PreRight(self.0, self.1), succ.clone()),
+        )
+            .p(toks)?;
+
+        let (op, mut exprs) = a
+            .map_right(|(expr, (op, mut exprs))| {
+                exprs.insert(0, expr);
+                (op, exprs)
+            })
+            .into_inner();
+        let expr = b.into_inner();
+        exprs.push(expr);
+        Some((toks, Expr::new(op, exprs)))
+    }
+}
+
 struct Inner<'g>(&'g PrecedenceGraph, Precedence, Fixity);
 
 impl<'g> Parser for Inner<'g> {
@@ -172,15 +208,12 @@ struct Backbone<'g>(&'g PrecedenceGraph, Operator);
 impl<'g> Parser for Backbone<'g> {
     type O = (Operator, Vec<Expr>);
     fn p<'i>(&self, toks: &'i [NamePart]) -> Option<(&'i [NamePart], Self::O)> {
-        let (toks, _) = Tok(&self.1.name_parts[0]).p(toks)?;
-        let (toks, exprs) = Seq(self
-            .1
-            .name_parts
-            .iter()
-            .skip(1)
-            .map(|t| (Expr_(self.0), Tok(t)))
-            .collect())
-        .p(toks)?;
+        let (first, rest) = self.1.name_parts.split_first().unwrap();
+        let (toks, (_, exprs)) = (
+            Tok(first),
+            Seq(rest.iter().map(|t| (Expr_(self.0), Tok(t))).collect()),
+        )
+            .p(toks)?;
         let exprs = exprs.into_iter().map(|(expr, ())| expr).collect();
         Some((toks, (self.1.clone(), exprs)))
     }
