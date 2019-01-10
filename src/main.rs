@@ -1,3 +1,4 @@
+extern crate either;
 extern crate petgraph;
 
 mod expr;
