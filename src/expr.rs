@@ -1,8 +1,8 @@
 use operator::Operator;
 
 pub struct Expr {
-    operator: Operator,
-    args: Vec<Expr>,
+    pub operator: Operator,
+    pub args: Vec<Expr>,
 }
 
 impl Expr {

@@ -3,6 +3,7 @@ use expr::Expr;
 use fixity::{Associativity, Fixity};
 use graph::Precedence;
 use graph::PrecedenceGraph;
+use itertools::Itertools;
 use operator::NamePart;
 use operator::Operator;
 
@@ -11,7 +12,14 @@ trait Parser {
     fn p<'i>(&self, toks: &'i [NamePart]) -> Option<(&'i [NamePart], Self::O)>;
 }
 
-impl<'a, O> Parser for &'a dyn Parser<O = O> {
+impl<P: Parser> Parser for &P {
+    type O = P::O;
+    fn p<'i>(&self, toks: &'i [NamePart]) -> Option<(&'i [NamePart], Self::O)> {
+        (*self).p(toks)
+    }
+}
+
+impl<O> Parser for &Parser<O = O> {
     type O = O;
     fn p<'i>(&self, toks: &'i [NamePart]) -> Option<(&'i [NamePart], Self::O)> {
         (*self).p(toks)
@@ -95,6 +103,29 @@ impl<P: Parser> Parser for Opts<P> {
     }
 }
 
+struct Star<T>(T);
+
+impl<P: Parser> Parser for Star<P> {
+    type O = Vec<P::O>;
+    fn p<'i>(&self, mut toks: &'i [NamePart]) -> Option<(&'i [NamePart], Self::O)> {
+        let mut res = Vec::new();
+        while let Some((next, o)) = self.0.p(toks) {
+            toks = next;
+            res.push(o);
+        }
+        Some((toks, res))
+    }
+}
+
+struct Plus<T>(T);
+
+impl<P: Parser> Parser for Plus<P> {
+    type O = Vec<P::O>;
+    fn p<'i>(&self, toks: &'i [NamePart]) -> Option<(&'i [NamePart], Self::O)> {
+        Star(&self.0).p(toks).filter(|(_, res)| !res.is_empty())
+    }
+}
+
 struct Expr_<'g>(&'g PrecedenceGraph);
 
 impl<'g> Parser for Expr_<'g> {
@@ -123,6 +154,7 @@ impl<'g> Parser for Prec<'g> {
             &Closed(self.0, self.1),
             &NonAssoc(self.0, self.1),
             &PreRight(self.0, self.1),
+            &PostLeft(self.0, self.1),
         ])
         .p(toks)
     }
@@ -133,8 +165,7 @@ struct Closed<'g>(&'g PrecedenceGraph, Precedence);
 impl<'g> Parser for Closed<'g> {
     type O = Expr;
     fn p<'i>(&self, toks: &'i [NamePart]) -> Option<(&'i [NamePart], Self::O)> {
-        let (toks, (op, exprs)) = Inner(self.0, self.1, Fixity::Closed).p(toks)?;
-        Some((toks, Expr::new(op, exprs)))
+        Inner(self.0, self.1, Fixity::Closed).p(toks)
     }
 }
 
@@ -143,16 +174,13 @@ struct NonAssoc<'g>(&'g PrecedenceGraph, Precedence);
 impl<'g> Parser for NonAssoc<'g> {
     type O = Expr;
     fn p<'i>(&self, toks: &'i [NamePart]) -> Option<(&'i [NamePart], Self::O)> {
-        let mut exprs = Vec::new();
         let succ = Precs(self.0, self.0.succ(self.1));
-        let (toks, e) = succ.p(toks)?;
-        exprs.push(e);
-        let (toks, (op, inner)) =
-            Inner(self.0, self.1, Fixity::Infix(Associativity::Non)).p(toks)?;
-        exprs.extend(inner);
-        let (toks, e) = succ.p(toks)?;
-        exprs.push(e);
-        Some((toks, Expr::new(op, exprs)))
+        let (toks, left) = succ.p(toks)?;
+        let (toks, mut expr) = Inner(self.0, self.1, Fixity::Infix(Associativity::Non)).p(toks)?;
+        let (toks, right) = succ.p(toks)?;
+        expr.args.insert(0, left);
+        expr.args.push(right);
+        Some((toks, expr))
     }
 }
 
@@ -162,35 +190,84 @@ impl<'g> Parser for PreRight<'g> {
     type O = Expr;
     fn p<'i>(&self, toks: &'i [NamePart]) -> Option<(&'i [NamePart], Self::O)> {
         let succ = Precs(self.0, self.0.succ(self.1));
-
-        let (toks, (a, b)) = (
-            Opt(
+        let (toks, (inners, last)) = (
+            Plus(Opt(
                 Inner(self.0, self.1, Fixity::Prefix),
                 (
-                    succ.clone(),
+                    &succ,
                     Inner(self.0, self.1, Fixity::Infix(Associativity::Right)),
                 ),
-            ),
-            Opt(PreRight(self.0, self.1), succ.clone()),
+            )),
+            &succ,
         )
             .p(toks)?;
 
-        let (op, mut exprs) = a
-            .map_right(|(expr, (op, mut exprs))| {
-                exprs.insert(0, expr);
-                (op, exprs)
+        let mut expr = inners
+            .into_iter()
+            .map(|e| {
+                e.map_right(|(first, mut rest)| {
+                    rest.args.insert(0, first);
+                    rest
+                })
+                .into_inner()
             })
-            .into_inner();
-        let expr = b.into_inner();
-        exprs.push(expr);
-        Some((toks, Expr::new(op, exprs)))
+            .rev()
+            .fold1(|right, mut left| {
+                left.args.push(right);
+                left
+            })
+            .unwrap();
+
+        expr.args.push(last);
+
+        Some((toks, expr))
+    }
+}
+
+struct PostLeft<'g>(&'g PrecedenceGraph, Precedence);
+
+impl<'g> Parser for PostLeft<'g> {
+    type O = Expr;
+    fn p<'i>(&self, toks: &'i [NamePart]) -> Option<(&'i [NamePart], Self::O)> {
+        let succ = Precs(self.0, self.0.succ(self.1));
+
+        let (toks, (first, inners)) = (
+            &succ,
+            Plus(Opt(
+                Inner(self.0, self.1, Fixity::Postfix),
+                (
+                    Inner(self.0, self.1, Fixity::Infix(Associativity::Left)),
+                    &succ,
+                ),
+            )),
+        )
+            .p(toks)?;
+
+        let mut expr = inners
+            .into_iter()
+            .map(|e| {
+                e.map_right(|(mut rest, last)| {
+                    rest.args.push(last);
+                    rest
+                })
+                .into_inner()
+            })
+            .fold1(|left, mut right| {
+                right.args.insert(0, left);
+                right
+            })
+            .unwrap();
+
+        expr.args.insert(0, first);
+
+        Some((toks, expr))
     }
 }
 
 struct Inner<'g>(&'g PrecedenceGraph, Precedence, Fixity);
 
 impl<'g> Parser for Inner<'g> {
-    type O = (Operator, Vec<Expr>);
+    type O = Expr;
     fn p<'i>(&self, toks: &'i [NamePart]) -> Option<(&'i [NamePart], Self::O)> {
         Opts(
             self.0
@@ -206,7 +283,7 @@ impl<'g> Parser for Inner<'g> {
 struct Backbone<'g>(&'g PrecedenceGraph, Operator);
 
 impl<'g> Parser for Backbone<'g> {
-    type O = (Operator, Vec<Expr>);
+    type O = Expr;
     fn p<'i>(&self, toks: &'i [NamePart]) -> Option<(&'i [NamePart], Self::O)> {
         let (first, rest) = self.1.name_parts.split_first().unwrap();
         let (toks, (_, exprs)) = (
@@ -215,6 +292,6 @@ impl<'g> Parser for Backbone<'g> {
         )
             .p(toks)?;
         let exprs = exprs.into_iter().map(|(expr, ())| expr).collect();
-        Some((toks, (self.1.clone(), exprs)))
+        Some((toks, Expr::new(self.1.clone(), exprs)))
     }
 }

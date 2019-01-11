@@ -6,3 +6,4 @@ authors = ["Chris Lovelace <chryslovelace@gmail.com>"]
 [dependencies]
 petgraph = "*"
 either = "*"
+itertools = "*"

@@ -1,4 +1,5 @@
 extern crate either;
+extern crate itertools;
 extern crate petgraph;
 
 mod expr;
