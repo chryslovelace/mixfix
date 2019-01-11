@@ -2,7 +2,7 @@ use fixity::Fixity;
 use operator::Operator;
 use petgraph::{
     graph::{node_index, DiGraph, NodeIndex},
-    visit::{depth_first_search, DfsEvent},
+    visit::{depth_first_search, Bfs, DfsEvent},
     Direction,
 };
 
@@ -49,16 +49,17 @@ impl PrecedenceGraph for DiGraph<Vec<Operator>, ()> {
     }
 
     fn succ(&self, prec: Self::P) -> Vec<Self::P> {
-        self.neighbors(prec).collect()
+        let mut succ = Vec::new();
+        let mut bfs = Bfs::new(self, prec);
+        while let Some(n) = bfs.next(self) {
+            if n != prec {
+                succ.push(n);
+            }
+        }
+        succ
     }
 
     fn all(&self) -> Vec<Self::P> {
-        let mut all = Vec::new();
-        depth_first_search(self, self.externals(Direction::Incoming), |event| {
-            if let DfsEvent::Discover(n, _) = event {
-                all.push(node_index(n.index()));
-            }
-        });
-        all
+        self.node_indices().collect()
     }
 }

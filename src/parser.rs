@@ -59,9 +59,9 @@ impl<A: Parser, B: Parser, C: Parser> Parser for (A, B, C) {
     }
 }
 
-struct Opt<A, B>(A, B);
+struct LazyOpt<A, B>(A, B);
 
-impl<A: Parser, B: Parser> Parser for Opt<A, B> {
+impl<A: Parser, B: Parser> Parser for LazyOpt<A, B> {
     type O = Either<A::O, B::O>;
     fn p<'i>(&self, toks: &'i [NamePart]) -> Option<(&'i [NamePart], Self::O)> {
         if let Some((next, a)) = self.0.p(toks) {
@@ -70,6 +70,26 @@ impl<A: Parser, B: Parser> Parser for Opt<A, B> {
             Some((next, Right(b)))
         } else {
             None
+        }
+    }
+}
+
+struct Opt<A, B>(A, B);
+
+impl<A: Parser, B: Parser> Parser for Opt<A, B> {
+    type O = Either<A::O, B::O>;
+    fn p<'i>(&self, toks: &'i [NamePart]) -> Option<(&'i [NamePart], Self::O)> {
+        match (self.0.p(toks), self.1.p(toks)) {
+            (Some((next, a)), None) => Some((next, Left(a))),
+            (None, Some((next, b))) => Some((next, Right(b))),
+            (Some((next_a, a)), Some((next_b, b))) => {
+                if next_a.len() < next_b.len() {
+                    Some((next_a, Left(a)))
+                } else {
+                    Some((next_b, Right(b)))
+                }
+            }
+            (None, None) => None,
         }
     }
 }
@@ -335,7 +355,7 @@ mod tests {
         g.add_edge(wt, c, ());
         g.add_edge(wt, a, ());
 
-        let input: Vec<_> = "•+•⊢•∶".chars().map(|c| c.to_string()).collect();
+        let input: Vec<_> = "•⊢•∶".chars().map(|c| c.to_string()).collect();
         let (toks, expr) = Expr_(&g).p(&input).unwrap();
         println!("{:?}", g.all());
         println!("{:?}", g);
