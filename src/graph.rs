@@ -1,6 +1,10 @@
 use fixity::Fixity;
 use operator::Operator;
-use petgraph::graph::{DiGraph, NodeIndex};
+use petgraph::{
+    graph::{node_index, DiGraph, NodeIndex},
+    visit::{depth_first_search, DfsEvent},
+    Direction,
+};
 
 pub trait PrecedenceGraph {
     type P: Copy;
@@ -49,6 +53,12 @@ impl PrecedenceGraph for DiGraph<Vec<Operator>, ()> {
     }
 
     fn all(&self) -> Vec<Self::P> {
-        self.node_indices().collect()
+        let mut all = Vec::new();
+        depth_first_search(self, self.externals(Direction::Incoming), |event| {
+            if let DfsEvent::Discover(n, _) = event {
+                all.push(node_index(n.index()));
+            }
+        });
+        all
     }
 }

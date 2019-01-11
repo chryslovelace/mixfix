@@ -1,5 +1,6 @@
 use operator::Operator;
 
+#[derive(Debug)]
 pub struct Expr {
     pub operator: Operator,
     pub args: Vec<Expr>,

@@ -5,6 +5,7 @@ use graph::PrecedenceGraph;
 use itertools::Itertools;
 use operator::NamePart;
 use operator::Operator;
+use petgraph::graph::DiGraph;
 
 trait Parser {
     type O;
@@ -102,6 +103,18 @@ impl<P: Parser> Parser for Opts<P> {
     }
 }
 
+struct GreedyOpts<T>(Vec<T>);
+
+impl<P: Parser> Parser for GreedyOpts<P> {
+    type O = P::O;
+    fn p<'i>(&self, toks: &'i [NamePart]) -> Option<(&'i [NamePart], Self::O)> {
+        self.0
+            .iter()
+            .filter_map(|p| p.p(toks))
+            .min_by_key(|(toks, _)| toks.len())
+    }
+}
+
 struct Star<T>(T);
 
 impl<P: Parser> Parser for Star<P> {
@@ -140,7 +153,7 @@ struct Precs<'g, G: PrecedenceGraph>(&'g G, Vec<G::P>);
 impl<'g, G: PrecedenceGraph> Parser for Precs<'g, G> {
     type O = Expr;
     fn p<'i>(&self, toks: &'i [NamePart]) -> Option<(&'i [NamePart], Self::O)> {
-        Opts(self.1.iter().map(|&p| Prec(self.0, p)).collect()).p(toks)
+        GreedyOpts(self.1.iter().map(|&p| Prec(self.0, p)).collect()).p(toks)
     }
 }
 
@@ -149,7 +162,7 @@ struct Prec<'g, G: PrecedenceGraph>(&'g G, G::P);
 impl<'g, G: PrecedenceGraph> Parser for Prec<'g, G> {
     type O = Expr;
     fn p<'i>(&self, toks: &'i [NamePart]) -> Option<(&'i [NamePart], Self::O)> {
-        Opts::<&Parser<O = Expr>>(vec![
+        GreedyOpts::<&Parser<O = Expr>>(vec![
             &Closed(self.0, self.1),
             &NonAssoc(self.0, self.1),
             &PreRight(self.0, self.1),
@@ -268,7 +281,7 @@ struct Inner<'g, G: PrecedenceGraph>(&'g G, G::P, Fixity);
 impl<'g, G: PrecedenceGraph> Parser for Inner<'g, G> {
     type O = Expr;
     fn p<'i>(&self, toks: &'i [NamePart]) -> Option<(&'i [NamePart], Self::O)> {
-        Opts(
+        GreedyOpts(
             self.0
                 .ops(self.1, self.2)
                 .into_iter()
@@ -307,6 +320,26 @@ mod tests {
         let if_then_else = Operator::new(Fixity::Prefix, vec!["i", "t", "e"]);
         let comma = Operator::new(Fixity::Infix(Associativity::Left), vec![","]);
         let well_typed = Operator::new(Fixity::Postfix, vec!["⊢", ":"]);
-        unimplemented!();
+        let mut g = DiGraph::new();
+        let a = g.add_node(vec![atom]);
+        let pl = g.add_node(vec![plus]);
+        let ii = g.add_node(vec![if_then, if_then_else]);
+        let c = g.add_node(vec![comma]);
+        let wt = g.add_node(vec![well_typed]);
+        g.add_edge(pl, a, ());
+        g.add_edge(ii, pl, ());
+        g.add_edge(ii, a, ());
+        g.add_edge(c, ii, ());
+        g.add_edge(c, pl, ());
+        g.add_edge(c, a, ());
+        g.add_edge(wt, c, ());
+        g.add_edge(wt, a, ());
+
+        let input: Vec<_> = "•+•⊢•∶".chars().map(|c| c.to_string()).collect();
+        let (toks, expr) = Expr_(&g).p(&input).unwrap();
+        println!("{:?}", g.all());
+        println!("{:?}", g);
+        println!("{:?}", toks);
+        println!("{:?}", expr);
     }
 }
