@@ -1,7 +1,6 @@
 use either::*;
 use expr::Expr;
 use fixity::{Associativity, Fixity};
-use graph::Precedence;
 use graph::PrecedenceGraph;
 use itertools::Itertools;
 use operator::NamePart;
@@ -126,9 +125,9 @@ impl<P: Parser> Parser for Plus<P> {
     }
 }
 
-struct Expr_<'g>(&'g PrecedenceGraph);
+struct Expr_<'g, G: PrecedenceGraph>(&'g G);
 
-impl<'g> Parser for Expr_<'g> {
+impl<'g, G: PrecedenceGraph> Parser for Expr_<'g, G> {
     type O = Expr;
     fn p<'i>(&self, toks: &'i [NamePart]) -> Option<(&'i [NamePart], Self::O)> {
         Precs(self.0, self.0.all()).p(toks)
@@ -136,18 +135,18 @@ impl<'g> Parser for Expr_<'g> {
 }
 
 #[derive(Clone)]
-struct Precs<'g>(&'g PrecedenceGraph, Vec<Precedence>);
+struct Precs<'g, G: PrecedenceGraph>(&'g G, Vec<G::P>);
 
-impl<'g> Parser for Precs<'g> {
+impl<'g, G: PrecedenceGraph> Parser for Precs<'g, G> {
     type O = Expr;
     fn p<'i>(&self, toks: &'i [NamePart]) -> Option<(&'i [NamePart], Self::O)> {
         Opts(self.1.iter().map(|&p| Prec(self.0, p)).collect()).p(toks)
     }
 }
 
-struct Prec<'g>(&'g PrecedenceGraph, Precedence);
+struct Prec<'g, G: PrecedenceGraph>(&'g G, G::P);
 
-impl<'g> Parser for Prec<'g> {
+impl<'g, G: PrecedenceGraph> Parser for Prec<'g, G> {
     type O = Expr;
     fn p<'i>(&self, toks: &'i [NamePart]) -> Option<(&'i [NamePart], Self::O)> {
         Opts::<&Parser<O = Expr>>(vec![
@@ -160,18 +159,18 @@ impl<'g> Parser for Prec<'g> {
     }
 }
 
-struct Closed<'g>(&'g PrecedenceGraph, Precedence);
+struct Closed<'g, G: PrecedenceGraph>(&'g G, G::P);
 
-impl<'g> Parser for Closed<'g> {
+impl<'g, G: PrecedenceGraph> Parser for Closed<'g, G> {
     type O = Expr;
     fn p<'i>(&self, toks: &'i [NamePart]) -> Option<(&'i [NamePart], Self::O)> {
         Inner(self.0, self.1, Fixity::Closed).p(toks)
     }
 }
 
-struct NonAssoc<'g>(&'g PrecedenceGraph, Precedence);
+struct NonAssoc<'g, G: PrecedenceGraph>(&'g G, G::P);
 
-impl<'g> Parser for NonAssoc<'g> {
+impl<'g, G: PrecedenceGraph> Parser for NonAssoc<'g, G> {
     type O = Expr;
     fn p<'i>(&self, toks: &'i [NamePart]) -> Option<(&'i [NamePart], Self::O)> {
         let succ = Precs(self.0, self.0.succ(self.1));
@@ -184,9 +183,9 @@ impl<'g> Parser for NonAssoc<'g> {
     }
 }
 
-struct PreRight<'g>(&'g PrecedenceGraph, Precedence);
+struct PreRight<'g, G: PrecedenceGraph>(&'g G, G::P);
 
-impl<'g> Parser for PreRight<'g> {
+impl<'g, G: PrecedenceGraph> Parser for PreRight<'g, G> {
     type O = Expr;
     fn p<'i>(&self, toks: &'i [NamePart]) -> Option<(&'i [NamePart], Self::O)> {
         let succ = Precs(self.0, self.0.succ(self.1));
@@ -224,9 +223,9 @@ impl<'g> Parser for PreRight<'g> {
     }
 }
 
-struct PostLeft<'g>(&'g PrecedenceGraph, Precedence);
+struct PostLeft<'g, G: PrecedenceGraph>(&'g G, G::P);
 
-impl<'g> Parser for PostLeft<'g> {
+impl<'g, G: PrecedenceGraph> Parser for PostLeft<'g, G> {
     type O = Expr;
     fn p<'i>(&self, toks: &'i [NamePart]) -> Option<(&'i [NamePart], Self::O)> {
         let succ = Precs(self.0, self.0.succ(self.1));
@@ -264,9 +263,9 @@ impl<'g> Parser for PostLeft<'g> {
     }
 }
 
-struct Inner<'g>(&'g PrecedenceGraph, Precedence, Fixity);
+struct Inner<'g, G: PrecedenceGraph>(&'g G, G::P, Fixity);
 
-impl<'g> Parser for Inner<'g> {
+impl<'g, G: PrecedenceGraph> Parser for Inner<'g, G> {
     type O = Expr;
     fn p<'i>(&self, toks: &'i [NamePart]) -> Option<(&'i [NamePart], Self::O)> {
         Opts(
@@ -280,9 +279,9 @@ impl<'g> Parser for Inner<'g> {
     }
 }
 
-struct Backbone<'g>(&'g PrecedenceGraph, Operator);
+struct Backbone<'g, G: PrecedenceGraph>(&'g G, Operator);
 
-impl<'g> Parser for Backbone<'g> {
+impl<'g, G: PrecedenceGraph> Parser for Backbone<'g, G> {
     type O = Expr;
     fn p<'i>(&self, toks: &'i [NamePart]) -> Option<(&'i [NamePart], Self::O)> {
         let (first, rest) = self.1.name_parts.split_first().unwrap();
@@ -293,5 +292,21 @@ impl<'g> Parser for Backbone<'g> {
             .p(toks)?;
         let exprs = exprs.into_iter().map(|(expr, ())| expr).collect();
         Some((toks, Expr::new(self.1.clone(), exprs)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_simple_parse() {
+        let atom = Operator::new(Fixity::Closed, vec!["•"]);
+        let plus = Operator::new(Fixity::Infix(Associativity::Left), vec!["+"]);
+        let if_then = Operator::new(Fixity::Prefix, vec!["i", "t"]);
+        let if_then_else = Operator::new(Fixity::Prefix, vec!["i", "t", "e"]);
+        let comma = Operator::new(Fixity::Infix(Associativity::Left), vec![","]);
+        let well_typed = Operator::new(Fixity::Postfix, vec!["⊢", ":"]);
+        unimplemented!();
     }
 }

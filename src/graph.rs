@@ -2,27 +2,53 @@ use fixity::Fixity;
 use operator::Operator;
 use petgraph::graph::{DiGraph, NodeIndex};
 
-#[derive(Default)]
-pub struct PrecedenceGraph(DiGraph<Vec<Operator>, ()>);
+pub trait PrecedenceGraph {
+    type P: Copy;
+    fn ops(&self, prec: Self::P, fix: Fixity) -> Vec<Operator>;
+    fn succ(&self, prec: Self::P) -> Vec<Self::P>;
+    fn all(&self) -> Vec<Self::P>;
+}
 
-pub type Precedence = NodeIndex;
+impl PrecedenceGraph for Vec<Vec<Operator>> {
+    type P = usize;
 
-impl PrecedenceGraph {
-    pub fn ops(&self, prec: Precedence, fix: Fixity) -> Vec<Operator> {
-        self.0
-            .node_weight(prec)
-            .unwrap()
+    fn ops(&self, prec: Self::P, fix: Fixity) -> Vec<Operator> {
+        self[prec]
             .iter()
             .filter(|o| o.fixity == fix)
             .cloned()
             .collect()
     }
 
-    pub fn succ(&self, prec: Precedence) -> Vec<Precedence> {
-        self.0.neighbors(prec).collect()
+    fn succ(&self, prec: Self::P) -> Vec<Self::P> {
+        if prec + 1 < self.len() {
+            vec![prec + 1]
+        } else {
+            vec![]
+        }
     }
 
-    pub fn all(&self) -> Vec<Precedence> {
-        self.0.node_indices().collect()
+    fn all(&self) -> Vec<Self::P> {
+        (0..self.len()).collect()
+    }
+}
+
+impl PrecedenceGraph for DiGraph<Vec<Operator>, ()> {
+    type P = NodeIndex;
+
+    fn ops(&self, prec: Self::P, fix: Fixity) -> Vec<Operator> {
+        self[prec]
+            .iter()
+            .filter(|o| o.fixity == fix)
+            .cloned()
+            .collect()
+    }
+
+    fn succ(&self, prec: Self::P) -> Vec<Self::P> {
+        self.neighbors(prec).collect()
+    }
+
+    fn all(&self) -> Vec<Self::P> {
+        self.node_indices().collect()
     }
 }
