@@ -5,7 +5,6 @@ use graph::PrecedenceGraph;
 use itertools::Itertools;
 use operator::NamePart;
 use operator::Operator;
-use petgraph::graph::DiGraph;
 
 trait Parser {
     type O;
@@ -331,35 +330,33 @@ impl<'g, G: PrecedenceGraph> Parser for Backbone<'g, G> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use petgraph::graph::DiGraph;
+
+    #[test]
+    fn test_tok() {
+        let input = [":".to_string()];
+        let (toks, ()) = Tok(":").p(&input).unwrap();
+        assert_eq!(toks.len(), 0);
+    }
 
     #[test]
     fn test_simple_parse() {
         let atom = Operator::new(Fixity::Closed, vec!["•"]);
         let plus = Operator::new(Fixity::Infix(Associativity::Left), vec!["+"]);
-        let if_then = Operator::new(Fixity::Prefix, vec!["i", "t"]);
-        let if_then_else = Operator::new(Fixity::Prefix, vec!["i", "t", "e"]);
-        let comma = Operator::new(Fixity::Infix(Associativity::Left), vec![","]);
         let well_typed = Operator::new(Fixity::Postfix, vec!["⊢", ":"]);
         let mut g = DiGraph::new();
         let a = g.add_node(vec![atom]);
         let pl = g.add_node(vec![plus]);
-        let ii = g.add_node(vec![if_then, if_then_else]);
-        let c = g.add_node(vec![comma]);
-        let wt = g.add_node(vec![well_typed]);
+        let wt = g.add_node(vec![well_typed.clone()]);
         g.add_edge(pl, a, ());
-        g.add_edge(ii, pl, ());
-        g.add_edge(ii, a, ());
-        g.add_edge(c, ii, ());
-        g.add_edge(c, pl, ());
-        g.add_edge(c, a, ());
-        g.add_edge(wt, c, ());
         g.add_edge(wt, a, ());
+        g.add_edge(wt, pl, ());
 
-        let input: Vec<_> = "•⊢•∶".chars().map(|c| c.to_string()).collect();
+        let input: Vec<_> = "•+•⊢•:".chars().map(|c| c.to_string()).collect();
+        println!("{:?}", input);
         let (toks, expr) = Expr_(&g).p(&input).unwrap();
-        println!("{:?}", g.all());
-        println!("{:?}", g);
+        assert_eq!(toks.len(), 0);
         println!("{:?}", toks);
-        println!("{:?}", expr);
+        println!("{:#?}", expr);
     }
 }
