@@ -15,4 +15,13 @@ impl Operator {
             name_parts: name_parts.into_iter().map(|s| s.into()).collect(),
         }
     }
+
+    pub fn arity(&self) -> usize {
+        let inner = self.name_parts.len() - 1;
+        match self.fixity {
+            Fixity::Closed => inner,
+            Fixity::Prefix | Fixity::Postfix => inner + 1,
+            Fixity::Infix(_) => inner + 2,
+        }
+    }
 }

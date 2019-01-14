@@ -3,8 +3,7 @@ use expr::Expr;
 use fixity::{Associativity, Fixity};
 use graph::PrecedenceGraph;
 use itertools::Itertools;
-use operator::NamePart;
-use operator::Operator;
+use operator::{NamePart, Operator};
 
 trait Parser {
     type O;
@@ -58,21 +57,6 @@ impl<A: Parser, B: Parser, C: Parser> Parser for (A, B, C) {
     }
 }
 
-struct LazyOpt<A, B>(A, B);
-
-impl<A: Parser, B: Parser> Parser for LazyOpt<A, B> {
-    type O = Either<A::O, B::O>;
-    fn p<'i>(&self, toks: &'i [NamePart]) -> Option<(&'i [NamePart], Self::O)> {
-        if let Some((next, a)) = self.0.p(toks) {
-            Some((next, Left(a)))
-        } else if let Some((next, b)) = self.1.p(toks) {
-            Some((next, Right(b)))
-        } else {
-            None
-        }
-    }
-}
-
 struct Opt<A, B>(A, B);
 
 impl<A: Parser, B: Parser> Parser for Opt<A, B> {
@@ -111,20 +95,6 @@ impl<P: Parser> Parser for Seq<P> {
 struct Opts<T>(Vec<T>);
 
 impl<P: Parser> Parser for Opts<P> {
-    type O = P::O;
-    fn p<'i>(&self, toks: &'i [NamePart]) -> Option<(&'i [NamePart], Self::O)> {
-        for p in &self.0 {
-            if let Some((next, o)) = p.p(toks) {
-                return Some((next, o));
-            }
-        }
-        None
-    }
-}
-
-struct GreedyOpts<T>(Vec<T>);
-
-impl<P: Parser> Parser for GreedyOpts<P> {
     type O = P::O;
     fn p<'i>(&self, toks: &'i [NamePart]) -> Option<(&'i [NamePart], Self::O)> {
         self.0
@@ -172,7 +142,7 @@ struct Precs<'g, G: PrecedenceGraph>(&'g G, Vec<G::P>);
 impl<'g, G: PrecedenceGraph> Parser for Precs<'g, G> {
     type O = Expr;
     fn p<'i>(&self, toks: &'i [NamePart]) -> Option<(&'i [NamePart], Self::O)> {
-        GreedyOpts(self.1.iter().map(|&p| Prec(self.0, p)).collect()).p(toks)
+        Opts(self.1.iter().map(|&p| Prec(self.0, p)).collect()).p(toks)
     }
 }
 
@@ -181,7 +151,7 @@ struct Prec<'g, G: PrecedenceGraph>(&'g G, G::P);
 impl<'g, G: PrecedenceGraph> Parser for Prec<'g, G> {
     type O = Expr;
     fn p<'i>(&self, toks: &'i [NamePart]) -> Option<(&'i [NamePart], Self::O)> {
-        GreedyOpts::<&Parser<O = Expr>>(vec![
+        Opts::<&Parser<O = Expr>>(vec![
             &Closed(self.0, self.1),
             &NonAssoc(self.0, self.1),
             &PreRight(self.0, self.1),
@@ -300,7 +270,7 @@ struct Inner<'g, G: PrecedenceGraph>(&'g G, G::P, Fixity);
 impl<'g, G: PrecedenceGraph> Parser for Inner<'g, G> {
     type O = Expr;
     fn p<'i>(&self, toks: &'i [NamePart]) -> Option<(&'i [NamePart], Self::O)> {
-        GreedyOpts(
+        Opts(
             self.0
                 .ops(self.1, self.2)
                 .into_iter()
@@ -311,7 +281,7 @@ impl<'g, G: PrecedenceGraph> Parser for Inner<'g, G> {
     }
 }
 
-struct Backbone<'g, G: PrecedenceGraph>(&'g G, Operator);
+struct Backbone<'g, G: PrecedenceGraph>(&'g G, &'g Operator);
 
 impl<'g, G: PrecedenceGraph> Parser for Backbone<'g, G> {
     type O = Expr;
@@ -327,6 +297,15 @@ impl<'g, G: PrecedenceGraph> Parser for Backbone<'g, G> {
     }
 }
 
+pub fn parse_expr<G: PrecedenceGraph>(graph: &G, tokens: &[NamePart]) -> Option<Expr> {
+    let (unparsed, expr) = Expr_(graph).p(tokens)?;
+    if unparsed.len() == 0 {
+        Some(expr)
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -339,8 +318,7 @@ mod tests {
         assert_eq!(toks.len(), 0);
     }
 
-    #[test]
-    fn test_simple_parse() {
+    fn simple_graph() -> impl PrecedenceGraph {
         let atom = Operator::new(Fixity::Closed, vec!["•"]);
         let plus = Operator::new(Fixity::Infix(Associativity::Left), vec!["+"]);
         let well_typed = Operator::new(Fixity::Postfix, vec!["⊢", ":"]);
@@ -351,12 +329,15 @@ mod tests {
         g.add_edge(pl, a, ());
         g.add_edge(wt, a, ());
         g.add_edge(wt, pl, ());
+        g
+    }
 
+    #[test]
+    fn test_simple_parse() {
         let input: Vec<_> = "•+•⊢•:".chars().map(|c| c.to_string()).collect();
         println!("{:?}", input);
-        let (toks, expr) = Expr_(&g).p(&input).unwrap();
-        assert_eq!(toks.len(), 0);
-        println!("{:?}", toks);
+        let expr = parse_expr(&simple_graph(), &input).unwrap();
+        assert!(expr.well_formed());
         println!("{:#?}", expr);
     }
 }
