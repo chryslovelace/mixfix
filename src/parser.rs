@@ -85,7 +85,7 @@ impl<A: Parser, B: Parser> Parser for Opt<A, B> {
                     Ok((next_b, Right(b)))
                 }
             }
-            (Err(e), Err(_)) => Err(e),
+            (Err(a), Err(b)) => Err(a.min(b)),
         }
     }
 }
