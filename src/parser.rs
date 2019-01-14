@@ -299,11 +299,14 @@ impl<'g, G: PrecedenceGraph> Parser for Backbone<'g, G> {
     fn p<'i>(&self, toks: &'i [NamePart]) -> ParseResult<'i, Self::O> {
         let (first, rest) = self.1.name_parts.split_first().unwrap();
         let (toks, (_, exprs)) = (
-            Tok(first),
-            Seq(rest.iter().map(|t| (Expr_(self.0), Tok(t))).collect()),
+            Seq(first.iter().map(|t| Tok(t)).collect()),
+            Seq(rest
+                .iter()
+                .map(|ts| (Expr_(self.0), Seq(ts.iter().map(|t| Tok(t)).collect())))
+                .collect()),
         )
             .p(toks)?;
-        let exprs = exprs.into_iter().map(|(expr, ())| expr).collect();
+        let exprs = exprs.into_iter().map(|(expr, _)| expr).collect();
         Ok((toks, Expr::new(self.1.clone(), exprs)))
     }
 }
@@ -333,9 +336,18 @@ mod tests {
     }
 
     fn simple_graph() -> impl PrecedenceGraph {
-        let atom = Operator::new(Fixity::Closed, vec!["•"]);
-        let plus = Operator::new(Fixity::Infix(Associativity::Left), vec!["+"]);
-        let well_typed = Operator::new(Fixity::Postfix, vec!["⊢", ":"]);
+        let atom = Operator {
+            fixity: Fixity::Closed,
+            name_parts: vec![vec!["•".into()]],
+        };
+        let plus = Operator {
+            fixity: Fixity::Infix(Associativity::Left),
+            name_parts: vec![vec!["+".into()]],
+        };
+        let well_typed = Operator {
+            fixity: Fixity::Postfix,
+            name_parts: vec![vec!["⊢".into()], vec![":".into()]],
+        };
         let mut g = DiGraph::new();
         let a = g.add_node(vec![atom]);
         let pl = g.add_node(vec![plus]);
