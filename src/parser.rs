@@ -138,6 +138,21 @@ impl<P: Parser> Parser for Plus<P> {
     }
 }
 
+struct Between<A, B>(A, Vec<B>);
+
+impl<A: Parser, B: Parser> Parser for Between<A, B> {
+    type O = Vec<A::O>;
+    fn p<'i>(&self, toks: &'i [NamePart]) -> ParseResult<'i, Self::O> {
+        if let Some((first, rest)) = self.1.split_first() {
+            (first, Seq(rest.iter().map(|p| (&self.0, p)).collect()))
+                .p(toks)
+                .map(|(toks, (_, xs))| (toks, xs.into_iter().map(|(x, _)| x).collect()))
+        } else {
+            Ok((toks, vec![]))
+        }
+    }
+}
+
 struct Expr_<'g, G: PrecedenceGraph>(&'g G);
 
 impl<'g, G: PrecedenceGraph> Parser for Expr_<'g, G> {
@@ -297,16 +312,17 @@ struct Backbone<'g, G: PrecedenceGraph>(&'g G, &'g Operator);
 impl<'g, G: PrecedenceGraph> Parser for Backbone<'g, G> {
     type O = Expr;
     fn p<'i>(&self, toks: &'i [NamePart]) -> ParseResult<'i, Self::O> {
-        let (first, rest) = self.1.name_parts.split_first().unwrap();
-        let (toks, (_, exprs)) = (
-            Seq(first.iter().map(|t| Tok(t)).collect()),
-            Seq(rest
+        let (toks, exprs) = Between(
+            Expr_(self.0),
+            self.1
+                .pattern
+                .backbone()
                 .iter()
-                .map(|ts| (Expr_(self.0), Seq(ts.iter().map(|t| Tok(t)).collect())))
-                .collect()),
+                .map(|b| Seq(b.iter().map(|t| Tok(t)).collect()))
+                .collect(),
         )
-            .p(toks)?;
-        let exprs = exprs.into_iter().map(|(expr, _)| expr).collect();
+        .p(toks)?;
+
         Ok((toks, Expr::new(self.1.clone(), exprs)))
     }
 }
@@ -327,6 +343,7 @@ pub fn parse_expr<'i, G: PrecedenceGraph>(
 mod tests {
     use super::*;
     use petgraph::graph::DiGraph;
+    use std::collections::HashMap;
 
     #[test]
     fn test_tok() {
@@ -338,15 +355,15 @@ mod tests {
     fn simple_graph() -> impl PrecedenceGraph {
         let atom = Operator {
             fixity: Fixity::Closed,
-            name_parts: vec![vec!["•".into()]],
+            pattern: "•".into(),
         };
         let plus = Operator {
             fixity: Fixity::Infix(Associativity::Left),
-            name_parts: vec![vec!["+".into()]],
+            pattern: "_+_".into(),
         };
         let well_typed = Operator {
             fixity: Fixity::Postfix,
-            name_parts: vec![vec!["⊢".into()], vec![":".into()]],
+            pattern: "_⊢_:".into(),
         };
         let mut g = DiGraph::new();
         let a = g.add_node(vec![atom]);
@@ -363,8 +380,8 @@ mod tests {
         let input: Vec<_> = "•+•⊢•:".chars().map(|c| c.to_string()).collect();
         println!("{:?}", input);
         let expr = parse_expr(&simple_graph(), &input).unwrap();
-        assert!(expr.well_formed());
         println!("{:#?}", expr);
+        assert!(expr.well_formed());
     }
 
     #[test]
@@ -372,5 +389,31 @@ mod tests {
         let input = vec!["abc".to_string()];
         let err = parse_expr(&simple_graph(), &input).unwrap_err();
         assert_eq!(ParseError::UnexpectedToken(&"abc".to_string()), err);
+    }
+
+    fn apply_graph() -> impl PrecedenceGraph {
+        let mut g = HashMap::new();
+        let a = Operator {
+            fixity: Fixity::Closed,
+            pattern: "a".into(),
+        };
+        let b = Operator {
+            fixity: Fixity::Closed,
+            pattern: "b".into(),
+        };
+        let app = Operator {
+            fixity: Fixity::Infix(Associativity::Left),
+            pattern: "_ _".into(),
+        };
+        g.insert(1, vec![a, b]);
+        g.insert(0, vec![app]);
+        g
+    }
+
+    #[test]
+    fn test_apply() {
+        let input = vec!["a".to_string(), "b".to_string()];
+        let expr = parse_expr(&apply_graph(), &input).unwrap();
+        println!("{:#?}", expr);
     }
 }
