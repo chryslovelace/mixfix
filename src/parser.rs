@@ -5,31 +5,32 @@ use graph::PrecedenceGraph;
 use itertools::Itertools;
 use operator::{NamePart, Operator};
 
-type ParseResult<'i, T> = Result<(&'i [NamePart], T), ParseError<'i>>;
+type ParseInput<'i> = &'i [&'i str];
+type ParseResult<'i, T> = Result<(ParseInput<'i>, T), ParseError<'i>>;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ParseError<'a> {
-    UnexpectedToken(&'a NamePart),
+    UnexpectedToken(&'a str),
     UnexpectedEndOfInput,
-    UnparsedInput(&'a [NamePart]),
+    UnparsedInput(ParseInput<'a>),
     EmptyOpts,
 }
 
 trait Parser {
     type O;
-    fn p<'i>(&self, toks: &'i [NamePart]) -> ParseResult<'i, Self::O>;
+    fn p<'i>(&self, toks: ParseInput<'i>) -> ParseResult<'i, Self::O>;
 }
 
 impl<P: Parser> Parser for &P {
     type O = P::O;
-    fn p<'i>(&self, toks: &'i [NamePart]) -> ParseResult<'i, Self::O> {
+    fn p<'i>(&self, toks: ParseInput<'i>) -> ParseResult<'i, Self::O> {
         (*self).p(toks)
     }
 }
 
 impl<O> Parser for &Parser<O = O> {
     type O = O;
-    fn p<'i>(&self, toks: &'i [NamePart]) -> ParseResult<'i, Self::O> {
+    fn p<'i>(&self, toks: ParseInput<'i>) -> ParseResult<'i, Self::O> {
         (*self).p(toks)
     }
 }
@@ -38,8 +39,8 @@ struct Tok<'a>(&'a str);
 
 impl<'a> Parser for Tok<'a> {
     type O = ();
-    fn p<'i>(&self, toks: &'i [NamePart]) -> ParseResult<'i, Self::O> {
-        if let Some((tok, rest)) = toks.split_first() {
+    fn p<'i>(&self, toks: ParseInput<'i>) -> ParseResult<'i, Self::O> {
+        if let Some((&tok, rest)) = toks.split_first() {
             if tok == self.0 {
                 Ok((rest, ()))
             } else {
@@ -53,7 +54,7 @@ impl<'a> Parser for Tok<'a> {
 
 impl<A: Parser, B: Parser> Parser for (A, B) {
     type O = (A::O, B::O);
-    fn p<'i>(&self, toks: &'i [NamePart]) -> ParseResult<'i, Self::O> {
+    fn p<'i>(&self, toks: ParseInput<'i>) -> ParseResult<'i, Self::O> {
         let (toks, a) = self.0.p(toks)?;
         let (toks, b) = self.1.p(toks)?;
         Ok((toks, (a, b)))
@@ -62,7 +63,7 @@ impl<A: Parser, B: Parser> Parser for (A, B) {
 
 impl<A: Parser, B: Parser, C: Parser> Parser for (A, B, C) {
     type O = (A::O, B::O, C::O);
-    fn p<'i>(&self, toks: &'i [NamePart]) -> ParseResult<'i, Self::O> {
+    fn p<'i>(&self, toks: ParseInput<'i>) -> ParseResult<'i, Self::O> {
         let (toks, a) = self.0.p(toks)?;
         let (toks, b) = self.1.p(toks)?;
         let (toks, c) = self.2.p(toks)?;
@@ -74,7 +75,7 @@ struct Opt<A, B>(A, B);
 
 impl<A: Parser, B: Parser> Parser for Opt<A, B> {
     type O = Either<A::O, B::O>;
-    fn p<'i>(&self, toks: &'i [NamePart]) -> ParseResult<'i, Self::O> {
+    fn p<'i>(&self, toks: ParseInput<'i>) -> ParseResult<'i, Self::O> {
         match (self.0.p(toks), self.1.p(toks)) {
             (Ok((next, a)), Err(_)) => Ok((next, Left(a))),
             (Err(_), Ok((next, b))) => Ok((next, Right(b))),
@@ -94,7 +95,7 @@ struct Seq<T>(Vec<T>);
 
 impl<P: Parser> Parser for Seq<P> {
     type O = Vec<P::O>;
-    fn p<'i>(&self, mut toks: &'i [NamePart]) -> ParseResult<'i, Self::O> {
+    fn p<'i>(&self, mut toks: ParseInput<'i>) -> ParseResult<'i, Self::O> {
         let mut out = Vec::new();
         for p in &self.0 {
             let (next, o) = p.p(toks)?;
@@ -109,7 +110,7 @@ struct Opts<T>(Vec<T>);
 
 impl<P: Parser> Parser for Opts<P> {
     type O = P::O;
-    fn p<'i>(&self, toks: &'i [NamePart]) -> ParseResult<'i, Self::O> {
+    fn p<'i>(&self, toks: ParseInput<'i>) -> ParseResult<'i, Self::O> {
         let (mut oks, mut errs) = (vec![], vec![]);
         for p in &self.0 {
             match p.p(toks) {
@@ -127,7 +128,7 @@ struct Plus<T>(T);
 
 impl<P: Parser> Parser for Plus<P> {
     type O = Vec<P::O>;
-    fn p<'i>(&self, toks: &'i [NamePart]) -> ParseResult<'i, Self::O> {
+    fn p<'i>(&self, toks: ParseInput<'i>) -> ParseResult<'i, Self::O> {
         let (mut toks, o) = self.0.p(toks)?;
         let mut res = vec![o];
         while let Ok((next, o)) = self.0.p(toks) {
@@ -142,7 +143,7 @@ struct Between<A, B>(A, Vec<B>);
 
 impl<A: Parser, B: Parser> Parser for Between<A, B> {
     type O = Vec<A::O>;
-    fn p<'i>(&self, toks: &'i [NamePart]) -> ParseResult<'i, Self::O> {
+    fn p<'i>(&self, toks: ParseInput<'i>) -> ParseResult<'i, Self::O> {
         if let Some((first, rest)) = self.1.split_first() {
             (first, Seq(rest.iter().map(|p| (&self.0, p)).collect()))
                 .p(toks)
@@ -157,17 +158,16 @@ struct Expr_<'g, G: PrecedenceGraph>(&'g G);
 
 impl<'g, G: PrecedenceGraph> Parser for Expr_<'g, G> {
     type O = Expr;
-    fn p<'i>(&self, toks: &'i [NamePart]) -> ParseResult<'i, Self::O> {
+    fn p<'i>(&self, toks: ParseInput<'i>) -> ParseResult<'i, Self::O> {
         Precs(self.0, self.0.all()).p(toks)
     }
 }
 
-#[derive(Clone)]
 struct Precs<'g, G: PrecedenceGraph>(&'g G, Vec<G::P>);
 
 impl<'g, G: PrecedenceGraph> Parser for Precs<'g, G> {
     type O = Expr;
-    fn p<'i>(&self, toks: &'i [NamePart]) -> ParseResult<'i, Self::O> {
+    fn p<'i>(&self, toks: ParseInput<'i>) -> ParseResult<'i, Self::O> {
         Opts(self.1.iter().map(|&p| Prec(self.0, p)).collect()).p(toks)
     }
 }
@@ -176,7 +176,7 @@ struct Prec<'g, G: PrecedenceGraph>(&'g G, G::P);
 
 impl<'g, G: PrecedenceGraph> Parser for Prec<'g, G> {
     type O = Expr;
-    fn p<'i>(&self, toks: &'i [NamePart]) -> ParseResult<'i, Self::O> {
+    fn p<'i>(&self, toks: ParseInput<'i>) -> ParseResult<'i, Self::O> {
         Opts::<&Parser<O = Expr>>(vec![
             &Closed(self.0, self.1),
             &NonAssoc(self.0, self.1),
@@ -191,7 +191,7 @@ struct Closed<'g, G: PrecedenceGraph>(&'g G, G::P);
 
 impl<'g, G: PrecedenceGraph> Parser for Closed<'g, G> {
     type O = Expr;
-    fn p<'i>(&self, toks: &'i [NamePart]) -> ParseResult<'i, Self::O> {
+    fn p<'i>(&self, toks: ParseInput<'i>) -> ParseResult<'i, Self::O> {
         Inner(self.0, self.1, Fixity::Closed).p(toks)
     }
 }
@@ -200,7 +200,7 @@ struct NonAssoc<'g, G: PrecedenceGraph>(&'g G, G::P);
 
 impl<'g, G: PrecedenceGraph> Parser for NonAssoc<'g, G> {
     type O = Expr;
-    fn p<'i>(&self, toks: &'i [NamePart]) -> ParseResult<'i, Self::O> {
+    fn p<'i>(&self, toks: ParseInput<'i>) -> ParseResult<'i, Self::O> {
         let succ = Precs(self.0, self.0.succ(self.1));
         let (toks, left) = succ.p(toks)?;
         let (toks, mut expr) = Inner(self.0, self.1, Fixity::Infix(Associativity::Non)).p(toks)?;
@@ -215,7 +215,7 @@ struct PreRight<'g, G: PrecedenceGraph>(&'g G, G::P);
 
 impl<'g, G: PrecedenceGraph> Parser for PreRight<'g, G> {
     type O = Expr;
-    fn p<'i>(&self, toks: &'i [NamePart]) -> ParseResult<'i, Self::O> {
+    fn p<'i>(&self, toks: ParseInput<'i>) -> ParseResult<'i, Self::O> {
         let succ = Precs(self.0, self.0.succ(self.1));
         let (toks, (inners, last)) = (
             Plus(Opt(
@@ -255,7 +255,7 @@ struct PostLeft<'g, G: PrecedenceGraph>(&'g G, G::P);
 
 impl<'g, G: PrecedenceGraph> Parser for PostLeft<'g, G> {
     type O = Expr;
-    fn p<'i>(&self, toks: &'i [NamePart]) -> ParseResult<'i, Self::O> {
+    fn p<'i>(&self, toks: ParseInput<'i>) -> ParseResult<'i, Self::O> {
         let succ = Precs(self.0, self.0.succ(self.1));
 
         let (toks, (first, inners)) = (
@@ -295,7 +295,7 @@ struct Inner<'g, G: PrecedenceGraph>(&'g G, G::P, Fixity);
 
 impl<'g, G: PrecedenceGraph> Parser for Inner<'g, G> {
     type O = Expr;
-    fn p<'i>(&self, toks: &'i [NamePart]) -> ParseResult<'i, Self::O> {
+    fn p<'i>(&self, toks: ParseInput<'i>) -> ParseResult<'i, Self::O> {
         Opts(
             self.0
                 .ops(self.1, self.2)
@@ -311,7 +311,7 @@ struct Backbone<'g, G: PrecedenceGraph>(&'g G, &'g Operator);
 
 impl<'g, G: PrecedenceGraph> Parser for Backbone<'g, G> {
     type O = Expr;
-    fn p<'i>(&self, toks: &'i [NamePart]) -> ParseResult<'i, Self::O> {
+    fn p<'i>(&self, toks: ParseInput<'i>) -> ParseResult<'i, Self::O> {
         let (toks, exprs) = Between(
             Expr_(self.0),
             self.1
@@ -329,7 +329,7 @@ impl<'g, G: PrecedenceGraph> Parser for Backbone<'g, G> {
 
 pub fn parse_expr<'i, G: PrecedenceGraph>(
     graph: &G,
-    tokens: &'i [NamePart],
+    tokens: ParseInput<'i>,
 ) -> Result<Expr, ParseError<'i>> {
     let (unparsed, expr) = Expr_(graph).p(tokens)?;
     if unparsed.len() == 0 {
@@ -347,7 +347,7 @@ mod tests {
 
     #[test]
     fn test_tok() {
-        let input = [":".to_string()];
+        let input = [":"];
         let (toks, ()) = Tok(":").p(&input).unwrap();
         assert_eq!(toks.len(), 0);
     }
@@ -378,6 +378,7 @@ mod tests {
     #[test]
     fn test_simple_parse() {
         let input: Vec<_> = "•+•⊢•:".chars().map(|c| c.to_string()).collect();
+        let input: Vec<_> = input.iter().map(|i| i.as_str()).collect();
         println!("{:?}", input);
         let expr = parse_expr(&simple_graph(), &input).unwrap();
         println!("{:#?}", expr);
@@ -386,9 +387,9 @@ mod tests {
 
     #[test]
     fn test_unexpected_token() {
-        let input = vec!["abc".to_string()];
+        let input = vec!["abc"];
         let err = parse_expr(&simple_graph(), &input).unwrap_err();
-        assert_eq!(ParseError::UnexpectedToken(&"abc".to_string()), err);
+        assert_eq!(ParseError::UnexpectedToken("abc"), err);
     }
 
     fn apply_graph() -> impl PrecedenceGraph {
@@ -412,7 +413,7 @@ mod tests {
 
     #[test]
     fn test_apply() {
-        let input = vec!["a".to_string(), "b".to_string()];
+        let input = vec!["a", "b"];
         let expr = parse_expr(&apply_graph(), &input).unwrap();
         println!("{:#?}", expr);
     }
